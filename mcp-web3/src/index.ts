@@ -764,10 +764,13 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
     return results;
   }
 
-  override async fetch(request: Request): Promise<Response> {
-    console.log("Request headers:", Object.fromEntries(request.headers.entries()));
-    
-    // Test endpoint without auth check
+  override async fetch(request: Request, env: Env): Promise<Response> {
+    // Log environment in fetch method
+    console.log("ENV in fetch method:", {
+      coingecko: this.coingeckoApiKey ? "present" : "missing",
+      github: this.githubApiKey ? "present" : "missing"
+    });
+  
     if (new URL(request.url).pathname === '/test-api-keys') {
       const results = await this.testApiKeys();
       return new Response(JSON.stringify(results, null, 2), {
@@ -775,8 +778,9 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
       });
     }
     
-    // Use ProxyToSelf with the current instance
-    // The ProxyToSelf class will handle authentication internally
-    return new ProxyToSelf(this).fetch(request);
+    // Use ProxyToSelf with the current instance and shared secret
+    return new ProxyToSelf(this, { 
+      sharedSecret: env.SHARED_SECRET 
+    }).fetch(request);
   }
 }
