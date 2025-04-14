@@ -1,0 +1,18 @@
+name = "mcp-web3"
+main = "src/index.ts"
+compatibility_date = "2023-10-30"
+
+[ai]
+binding = "AI"
+
+# Environment variables are managed in the Cloudflare dashboard as encrypted secrets
+[vars]
+# These will be populated from the dashboard secrets
+API_KEY_COINGECKO = ""
+API_KEY_GITHUB = ""
+SHARED_SECRET = ""
+
+# Configure caching for API responses to avoid rate limits
+[[kv_namespaces]]
+binding = "WEB3_CACHE"
+id = "f6dee92611ba4e18963ddbc50e8ceaea"
