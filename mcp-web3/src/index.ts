@@ -815,44 +815,120 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
   }
 
   override async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    
-    // Debug endpoints
-    if (url.pathname === '/debug-headers') {
-      return this.debugHeaders(request);
-    }
-    
-    if (url.pathname === '/test-api-keys') {
-      return new Response(JSON.stringify({
-        coingeckoApiKey: this.coingeckoApiKey ? `present (${this.coingeckoApiKey.length} chars)` : 'missing',
-        githubApiKey: this.githubApiKey ? `present (${this.githubApiKey.length} chars)` : 'missing',
-        sharedSecret: this.sharedSecret ? `present (${this.sharedSecret.length} chars)` : 'missing'
-      }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    // AUTHENTICATION DISABLED FOR TESTING
-    console.log("Authentication check bypassed for testing");
-    
-    // Process the request through ProxyToSelf
     try {
-      if (!this.proxy) {
-        console.log("Initializing ProxyToSelf with shared secret");
-        this.proxy = new ProxyToSelf({
-          sharedSecret: this.sharedSecret,
-          // Add any other required options
+      const url = new URL(request.url);
+      
+      // Debug endpoints
+      if (url.pathname === '/debug-headers') {
+        return this.debugHeaders(request);
+      }
+      
+      if (url.pathname === '/test-api-keys') {
+        return new Response(JSON.stringify({
+          coingeckoApiKey: this.coingeckoApiKey ? `present (${this.coingeckoApiKey.length} chars)` : 'missing',
+          githubApiKey: this.githubApiKey ? `present (${this.githubApiKey.length} chars)` : 'missing',
+          sharedSecret: this.sharedSecret ? `present (${this.sharedSecret.length} chars)` : 'missing'
+        }), {
+          headers: { 'Content-Type': 'application/json' }
         });
       }
       
-      console.log("Forwarding request to ProxyToSelf");
-      return this.proxy.fetch(request);
-    } catch (error) {
-      console.error("Error in ProxyToSelf handling:", error);
+      // AUTHENTICATION DISABLED FOR TESTING
+      console.log("Authentication check bypassed for testing");
+      
+      // Add a test endpoint to verify basic functionality
+      if (url.pathname === '/test-function') {
+        return new Response(JSON.stringify({
+          message: "Direct function call successful",
+          result: {
+            name: "Test Ethereum",
+            symbol: "ETH",
+            description: "Test description"
+          }
+        }), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      // Log request details
+      console.log("Processing request:", {
+        url: request.url,
+        method: request.method,
+        path: url.pathname,
+        headers: Object.fromEntries(request.headers.entries())
+      });
+      
+      // Handle /rpc requests directly to debug MCP handling
+      if (url.pathname === '/rpc') {
+        const body = await request.json();
+        console.log("RPC request body:", body);
+        
+        // Type check the RPC request body
+        if (typeof body !== 'object' || body === null) {
+          throw new Error('Invalid RPC request body');
+        }
+        
+        const rpcBody = body as { method: string; params: any[] };
+        if (!rpcBody.method || !Array.isArray(rpcBody.params)) {
+          throw new Error('Invalid RPC request format');
+        }
+        
+        // Extract method and params
+        const { method, params } = rpcBody;
+        console.log(`Calling method ${method} with params:`, params);
+        
+        try {
+          // Directly call the method on this class
+          // @ts-ignore - Dynamic method call
+          const result = await this[method](...params);
+          console.log(`Method ${method} result:`, result);
+          
+          return new Response(JSON.stringify({
+            result: result
+          }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        } catch (methodError: any) {
+          console.error(`Error calling method ${method}:`, methodError);
+          return new Response(JSON.stringify({
+            error: "Method execution failed",
+            method: method,
+            message: methodError.message,
+            stack: methodError.stack
+          }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }
+      
+      // Process the request through ProxyToSelf as a fallback
+      try {
+        console.log("Initializing ProxyToSelf");
+        if (!this.proxy) {
+          this.proxy = new ProxyToSelf(this);
+        }
+        
+        console.log("Forwarding request to ProxyToSelf");
+        return this.proxy.fetch(request);
+      } catch (proxyError: any) {
+        console.error("Error in ProxyToSelf handling:", proxyError);
+        return new Response(JSON.stringify({
+          error: "Proxy Error",
+          message: proxyError.message,
+          stack: proxyError.stack
+        }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    } catch (outerError: any) {
+      // Catch any unexpected errors
+      console.error("Unexpected error in fetch handler:", outerError);
       return new Response(JSON.stringify({
-        error: "Proxy Error",
-        message: error.message,
-        stack: error.stack
+        error: "Server Error",
+        message: outerError.message,
+        stack: outerError.stack
       }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' }
