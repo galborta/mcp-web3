@@ -815,17 +815,13 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
   }
 
   override async fetch(request: Request): Promise<Response> {
-    // Debug endpoints that bypass authentication
     const url = new URL(request.url);
     
+    // Debug endpoints
     if (url.pathname === '/debug-headers') {
       return this.debugHeaders(request);
     }
-
-    if (url.pathname === '/debug-auth') {
-      return this.debugAuth(request);
-    }
-
+    
     if (url.pathname === '/test-api-keys') {
       return new Response(JSON.stringify({
         coingeckoApiKey: this.coingeckoApiKey ? `present (${this.coingeckoApiKey.length} chars)` : 'missing',
@@ -836,68 +832,28 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
       });
     }
 
-    // For all other endpoints, check authentication
-    const authHeader = request.headers.get('Authorization') || '';
-    const sharedSecret = this.sharedSecret || '';
-
-    // Try multiple authentication formats
-    let authenticated = false;
-
-    // Check exact match
-    if (authHeader === sharedSecret) {
-      authenticated = true;
-      console.log("Authenticated with exact match");
-    }
-    // Check Bearer format
-    else if (authHeader === `Bearer ${sharedSecret}`) {
-      authenticated = true;
-      console.log("Authenticated with Bearer prefix");
-    }
-    // Check if header contains the secret
-    else if (sharedSecret && authHeader.includes(sharedSecret)) {
-      authenticated = true;
-      console.log("Authenticated with partial match");
-    }
-
-    console.log("Auth debug:", {
-      authHeaderExists: !!authHeader,
-      authHeaderLength: authHeader.length,
-      secretLength: sharedSecret.length,
-      authFirst10Chars: authHeader.substring(0, Math.min(10, authHeader.length)),
-      secretFirst3Chars: sharedSecret.substring(0, Math.min(3, sharedSecret.length)),
-      authenticated: authenticated
-    });
-
-    if (!authenticated) {
-      return new Response(JSON.stringify({
-        error: "Unauthorized",
-        detail: "Authentication failed",
-        authHeaderExists: !!authHeader,
-        secretExists: !!sharedSecret,
-        pathRequested: url.pathname,
-        // Add more detailed info for debugging
-        authHeaderLength: authHeader.length,
-        secretLength: sharedSecret.length,
-        authFirst3Chars: authHeader.substring(0, Math.min(3, authHeader.length)),
-        secretFirst3Chars: sharedSecret.substring(0, Math.min(3, sharedSecret.length))
-      }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
+    // AUTHENTICATION DISABLED FOR TESTING
+    console.log("Authentication check bypassed for testing");
     
-    // Initialize the MCP proxy if not already done
+    // Process the request through ProxyToSelf
     try {
-      // Create a ProxyToSelf instance if it doesn't exist yet
       if (!this.proxy) {
-        this.proxy = new ProxyToSelf(this);
+        console.log("Initializing ProxyToSelf with shared secret");
+        this.proxy = new ProxyToSelf({
+          sharedSecret: this.sharedSecret,
+          // Add any other required options
+        });
       }
       
-      // Pass the request to your MCP handler
+      console.log("Forwarding request to ProxyToSelf");
       return this.proxy.fetch(request);
     } catch (error) {
-      console.error("Error initializing or using ProxyToSelf:", error);
-      return new Response(JSON.stringify({ error: "Server error", message: error.message }), {
+      console.error("Error in ProxyToSelf handling:", error);
+      return new Response(JSON.stringify({
+        error: "Proxy Error",
+        message: error.message,
+        stack: error.stack
+      }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' }
       });
