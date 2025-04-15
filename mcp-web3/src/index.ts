@@ -61,6 +61,7 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
   private readonly coingeckoApiKey: string;
   private readonly githubApiKey: string;
   private readonly sharedSecret: string;
+  private proxy: any; // Type for ProxyToSelf
   
   constructor(ctx: ExecutionContext, env: Env) {
     super(ctx, env);
@@ -769,95 +770,92 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
     return results;
   }
 
-  override async fetch(request: Request, env: Env): Promise<Response> {
-    try {
-      // Log environment in fetch method
-      console.log("ENV in fetch method:", {
-        coingecko: this.coingeckoApiKey ? "present" : "missing",
-        github: this.githubApiKey ? "present" : "missing",
-        sharedSecret: this.sharedSecret ? "present" : "missing"
-      });
+  /**
+   * Debug endpoint to check request headers
+   * @param request The incoming request
+   * @returns Response with header information
+   */
+  async debugHeaders(request: Request): Promise<Response> {
+    const headers: Record<string, string> = {};
+    request.headers.forEach((value, key) => {
+      headers[key] = value;
+    });
     
-      if (new URL(request.url).pathname === '/test-api-keys') {
-        const results = await this.testApiKeys();
-        return new Response(JSON.stringify(results, null, 2), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-  
-      // Add debug endpoint for MCP requests
-      if (new URL(request.url).pathname === '/debug-mcp') {
-        console.log("MCP Debug - Request headers:", Object.fromEntries([...request.headers]));
-        console.log("MCP Debug - Request method:", request.method);
-        console.log("MCP Debug - Request URL:", request.url);
-        
-        // Test creating a ProxyToSelf instance
-        try {
-          console.log("MCP Debug - Creating ProxyToSelf with shared secret:", this.sharedSecret ? "present" : "missing");
-          const proxy = new ProxyToSelf(this, { 
-            sharedSecret: this.sharedSecret 
-          });
-          console.log("MCP Debug - ProxyToSelf created successfully");
-        } catch (proxyError) {
-          console.error("MCP Debug - ProxyToSelf creation error:", proxyError);
-        }
-        
-        return new Response(JSON.stringify({
-          message: "MCP debug endpoint",
-          env: {
-            sharedSecret: this.sharedSecret ? "present" : "missing"
-          },
-          headers: Object.fromEntries([...request.headers])
-        }), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-      
-      // Add debug endpoint for environment variables
-      if (new URL(request.url).pathname === '/debug-env') {
-        const envDetails = {
-          coingeckoApiKey: this.coingeckoApiKey ? `present (${this.coingeckoApiKey.length} chars)` : "missing",
-          githubApiKey: this.githubApiKey ? `present (${this.githubApiKey.length} chars)` : "missing",
-          sharedSecret: this.sharedSecret ? `present (${this.sharedSecret.length} chars)` : "missing",
-        };
-        return new Response(JSON.stringify(envDetails, null, 2), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-      
-      // Try simplest approach first
-      try {
-        console.log("Using simplest ProxyToSelf approach");
-        const proxy = new ProxyToSelf(this);
-        return proxy.fetch(request);
-      } catch (simpleProxyError) {
-        console.error("Simple ProxyToSelf error:", simpleProxyError);
-        
-        // If that fails, try with explicit shared secret
-        try {
-          console.log("Falling back to explicit shared secret");
-          const proxy = new ProxyToSelf(this, { 
-            sharedSecret: this.sharedSecret 
-          });
-          return proxy.fetch(request);
-        } catch (explicitProxyError) {
-          console.error("Explicit shared secret error:", explicitProxyError);
-          return new Response(JSON.stringify({
-            error: "ProxyToSelf errors",
-            simpleError: simpleProxyError.message,
-            explicitError: explicitProxyError.message
-          }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' }
-          });
-        }
-      }
-    } catch (error) {
-      console.error("Worker exception:", error);
+    // Check specifically for authorization header
+    const authHeader = request.headers.get('Authorization');
+    
+    return new Response(JSON.stringify({
+      headers: headers,
+      authHeader: authHeader,
+      secretFirstThreeChars: this.sharedSecret ? this.sharedSecret.substring(0, 3) : null,
+      secretLength: this.sharedSecret ? this.sharedSecret.length : 0,
+    }), { 
+      headers: { 'Content-Type': 'application/json' } 
+    });
+  }
+
+  override async fetch(request: Request): Promise<Response> {
+    // Debug endpoints that bypass authentication
+    const url = new URL(request.url);
+    
+    if (url.pathname === '/debug-headers') {
+      return this.debugHeaders(request);
+    }
+
+    if (url.pathname === '/test-api-keys') {
       return new Response(JSON.stringify({
-        error: error.message,
-        stack: error.stack
+        coingeckoApiKey: this.coingeckoApiKey ? `present (${this.coingeckoApiKey.length} chars)` : 'missing',
+        githubApiKey: this.githubApiKey ? `present (${this.githubApiKey.length} chars)` : 'missing',
+        sharedSecret: this.sharedSecret ? `present (${this.sharedSecret.length} chars)` : 'missing'
       }), {
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // For all other endpoints, check authentication
+    const authHeader = request.headers.get('Authorization');
+    
+    // Try multiple authentication formats
+    const exactMatch = authHeader === this.sharedSecret;
+    const bearerMatch = authHeader === `Bearer ${this.sharedSecret}`;
+    const endsWith = authHeader && this.sharedSecret && authHeader.endsWith(this.sharedSecret);
+    
+    console.log("Auth debug:", {
+      authHeaderExists: !!authHeader,
+      authHeaderLength: authHeader ? authHeader.length : 0,
+      secretLength: this.sharedSecret ? this.sharedSecret.length : 0,
+      exactMatch,
+      bearerMatch,
+      endsWith,
+      authFirstChars: authHeader ? authHeader.substring(0, 3) : null,
+      secretFirstChars: this.sharedSecret ? this.sharedSecret.substring(0, 3) : null
+    });
+    
+    if (!exactMatch && !bearerMatch && !endsWith) {
+      return new Response(JSON.stringify({
+        error: "Unauthorized",
+        detail: "Authentication failed",
+        authHeaderExists: !!authHeader,
+        secretExists: !!this.sharedSecret,
+        pathRequested: url.pathname
+      }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    // Initialize the MCP proxy if not already done
+    try {
+      // Create a ProxyToSelf instance if it doesn't exist yet
+      if (!this.proxy) {
+        this.proxy = new ProxyToSelf(this);
+      }
+      
+      // Pass the request to your MCP handler
+      return this.proxy.fetch(request);
+    } catch (error) {
+      console.error("Error initializing or using ProxyToSelf:", error);
+      return new Response(JSON.stringify({ error: "Server error", message: error.message }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' }
       });
