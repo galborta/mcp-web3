@@ -77,7 +77,7 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
     // Store them in class properties
     this.coingeckoApiKey = env.API_KEY_COINGECKO;
     this.githubApiKey = env.API_KEY_GITHUB;
-    this.sharedSecret = env.SHARED_SECRET; // Add this line
+    this.sharedSecret = env.SHARED_SECRET;
   }
   /**
    * Get comprehensive information about a specific web3 project by name or ticker symbol
@@ -710,6 +710,7 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
     console.log("API Keys from constructor properties:");
     console.log("CoinGecko:", this.coingeckoApiKey ? "present" : "missing");
     console.log("GitHub:", this.githubApiKey ? "present" : "missing");
+    console.log("Shared Secret:", this.sharedSecret ? "present" : "missing");
 
     const results: { [key: string]: any } = {
       coingecko: { status: 'unknown' },
@@ -774,7 +775,7 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
       console.log("ENV in fetch method:", {
         coingecko: this.coingeckoApiKey ? "present" : "missing",
         github: this.githubApiKey ? "present" : "missing",
-        sharedSecret: this.sharedSecret ? "present" : "missing" // Updated this line
+        sharedSecret: this.sharedSecret ? "present" : "missing"
       });
     
       if (new URL(request.url).pathname === '/test-api-keys') {
@@ -784,30 +785,73 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
         });
       }
   
-      // Add debug endpoint
-      if (new URL(request.url).pathname === '/debug-request') {
-        const requestDetails = {
-          method: request.method,
-          url: request.url,
-          headers: Object.fromEntries([...request.headers]),
-          body: request.body ? "present" : "missing"
-        };
-        console.log("Debug request:", requestDetails);
-        return new Response(JSON.stringify(requestDetails, null, 2), {
+      // Add debug endpoint for MCP requests
+      if (new URL(request.url).pathname === '/debug-mcp') {
+        console.log("MCP Debug - Request headers:", Object.fromEntries([...request.headers]));
+        console.log("MCP Debug - Request method:", request.method);
+        console.log("MCP Debug - Request URL:", request.url);
+        
+        // Test creating a ProxyToSelf instance
+        try {
+          console.log("MCP Debug - Creating ProxyToSelf with shared secret:", this.sharedSecret ? "present" : "missing");
+          const proxy = new ProxyToSelf(this, { 
+            sharedSecret: this.sharedSecret 
+          });
+          console.log("MCP Debug - ProxyToSelf created successfully");
+        } catch (proxyError) {
+          console.error("MCP Debug - ProxyToSelf creation error:", proxyError);
+        }
+        
+        return new Response(JSON.stringify({
+          message: "MCP debug endpoint",
+          env: {
+            sharedSecret: this.sharedSecret ? "present" : "missing"
+          },
+          headers: Object.fromEntries([...request.headers])
+        }), {
           headers: { 'Content-Type': 'application/json' }
         });
       }
       
-      // Verify shared secret
-      if (!this.sharedSecret) {
-        console.error("Shared secret is missing!");
-        return new Response("Configuration error: Shared secret is missing", { status: 500 });
+      // Add debug endpoint for environment variables
+      if (new URL(request.url).pathname === '/debug-env') {
+        const envDetails = {
+          coingeckoApiKey: this.coingeckoApiKey ? `present (${this.coingeckoApiKey.length} chars)` : "missing",
+          githubApiKey: this.githubApiKey ? `present (${this.githubApiKey.length} chars)` : "missing",
+          sharedSecret: this.sharedSecret ? `present (${this.sharedSecret.length} chars)` : "missing",
+        };
+        return new Response(JSON.stringify(envDetails, null, 2), {
+          headers: { 'Content-Type': 'application/json' }
+        });
       }
       
-      // Use ProxyToSelf with the stored shared secret
-      return new ProxyToSelf(this, { 
-        sharedSecret: this.sharedSecret // Use this.sharedSecret instead of env.SHARED_SECRET
-      }).fetch(request);
+      // Try simplest approach first
+      try {
+        console.log("Using simplest ProxyToSelf approach");
+        const proxy = new ProxyToSelf(this);
+        return proxy.fetch(request);
+      } catch (simpleProxyError) {
+        console.error("Simple ProxyToSelf error:", simpleProxyError);
+        
+        // If that fails, try with explicit shared secret
+        try {
+          console.log("Falling back to explicit shared secret");
+          const proxy = new ProxyToSelf(this, { 
+            sharedSecret: this.sharedSecret 
+          });
+          return proxy.fetch(request);
+        } catch (explicitProxyError) {
+          console.error("Explicit shared secret error:", explicitProxyError);
+          return new Response(JSON.stringify({
+            error: "ProxyToSelf errors",
+            simpleError: simpleProxyError.message,
+            explicitError: explicitProxyError.message
+          }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }
     } catch (error) {
       console.error("Worker exception:", error);
       return new Response(JSON.stringify({
