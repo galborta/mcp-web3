@@ -860,6 +860,7 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
       
       // Handle /rpc requests directly to debug MCP handling
       if (url.pathname === '/rpc') {
+        // Parse the request body
         let body;
         try {
           body = await request.json();
@@ -876,16 +877,17 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
           });
         }
 
-        console.log("RPC request body:", body);
+        console.log("Full RPC request body:", JSON.stringify(body));
         
         // Type check and validate the request body
         interface RPCRequest {
           method: string;
           params?: any[];
+          id?: string | number;
         }
 
-        const rpcRequest = body as RPCRequest;
-        if (!rpcRequest || typeof rpcRequest.method !== 'string') {
+        const rpcBody = body as RPCRequest;
+        if (!rpcBody || typeof rpcBody.method !== 'string') {
           return new Response(JSON.stringify({
             error: "Invalid RPC request format",
             receivedBody: body
@@ -895,12 +897,15 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
           });
         }
         
-        // Extract method and params with proper typing
-        const { method, params = [] } = rpcRequest;
-        console.log(`Calling method ${method} with params:`, params);
+        // Extract method and params with more detailed logging
+        const { method, params = [], id } = rpcBody;
+        console.log(`Method: ${method}`);
+        console.log(`Params: ${JSON.stringify(params)}`);
+        console.log(`ID: ${id}`);
         
         // Check if method exists on this class
-        if (typeof this[method] !== 'function') {
+        const methodFn = (this as any)[method];
+        if (typeof methodFn !== 'function') {
           return new Response(JSON.stringify({
             error: "Method not found",
             method: method,
@@ -912,18 +917,38 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
           });
         }
         
+        // Handle params that might be wrapped in an array or object
+        let processedParams = params;
+        if (Array.isArray(params) && params.length === 1 && typeof params[0] === 'object') {
+          // Handle case where params is [{ paramName: value }]
+          processedParams = Object.values(params[0]);
+          console.log("Unwrapped params from object:", processedParams);
+        } else if (!Array.isArray(params) && typeof params === 'object') {
+          // Handle case where params is { paramName: value }
+          processedParams = Object.values(params);
+          console.log("Extracted values from params object:", processedParams);
+        }
+        
         try {
-          // Directly call the method on this class
-          // @ts-ignore - Dynamic method call
-          const result = await this[method](...params);
+          // Call the method with the processed parameters
+          let result;
+          if (Array.isArray(processedParams)) {
+            result = await methodFn.apply(this, processedParams);
+          } else {
+            result = await methodFn.call(this, processedParams);
+          }
+          
           console.log(`Method ${method} result:`, result);
           
           return new Response(JSON.stringify({
+            jsonrpc: "2.0",
+            id: id,
             result: result
           }), {
             headers: { 'Content-Type': 'application/json' }
           });
-        } catch (methodError: any) {
+        } catch (error) {
+          const methodError = error as Error;
           console.error(`Error calling method ${method}:`, methodError);
           return new Response(JSON.stringify({
             error: "Method execution failed",
