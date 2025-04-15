@@ -480,7 +480,6 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
       };
     });
     
-<<<<<<< HEAD
     const projectsData = await Promise.all(projectDataPromises);
     
     // Calculate ranking based on different metrics
