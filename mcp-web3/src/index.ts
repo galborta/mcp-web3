@@ -860,22 +860,57 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
       
       // Handle /rpc requests directly to debug MCP handling
       if (url.pathname === '/rpc') {
-        const body = await request.json();
+        let body;
+        try {
+          body = await request.json();
+        } catch (jsonError) {
+          console.error("Failed to parse JSON body:", jsonError);
+          const text = await request.text();
+          console.log("Raw request body:", text);
+          return new Response(JSON.stringify({
+            error: "Invalid JSON in request body",
+            rawBody: text.substring(0, 500) // First 500 chars for debugging
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+
         console.log("RPC request body:", body);
         
-        // Type check the RPC request body
-        if (typeof body !== 'object' || body === null) {
-          throw new Error('Invalid RPC request body');
+        // Type check and validate the request body
+        interface RPCRequest {
+          method: string;
+          params?: any[];
+        }
+
+        const rpcRequest = body as RPCRequest;
+        if (!rpcRequest || typeof rpcRequest.method !== 'string') {
+          return new Response(JSON.stringify({
+            error: "Invalid RPC request format",
+            receivedBody: body
+          }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' }
+          });
         }
         
-        const rpcBody = body as { method: string; params: any[] };
-        if (!rpcBody.method || !Array.isArray(rpcBody.params)) {
-          throw new Error('Invalid RPC request format');
-        }
-        
-        // Extract method and params
-        const { method, params } = rpcBody;
+        // Extract method and params with proper typing
+        const { method, params = [] } = rpcRequest;
         console.log(`Calling method ${method} with params:`, params);
+        
+        // Check if method exists on this class
+        if (typeof this[method] !== 'function') {
+          return new Response(JSON.stringify({
+            error: "Method not found",
+            method: method,
+            availableMethods: Object.getOwnPropertyNames(Object.getPrototypeOf(this))
+              .filter(name => typeof this[name] === 'function' && name !== 'constructor')
+          }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
         
         try {
           // Directly call the method on this class
@@ -895,6 +930,37 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
             method: method,
             message: methodError.message,
             stack: methodError.stack
+          }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' }
+          });
+        }
+      }
+
+      if (url.pathname === '/test-method') {
+        const methodName = url.searchParams.get('method') || 'getProjectInfo';
+        const param1 = url.searchParams.get('param1') || 'ethereum';
+        
+        try {
+          // Check if the method exists and is callable
+          const method = this[methodName as keyof typeof this];
+          if (typeof method !== 'function') {
+            throw new Error(`Method ${methodName} not found or not callable`);
+          }
+
+          const result = await method.call(this, param1);
+          return new Response(JSON.stringify({
+            method: methodName,
+            param: param1,
+            result: result
+          }), {
+            headers: { 'Content-Type': 'application/json' }
+          });
+        } catch (error: any) {
+          return new Response(JSON.stringify({
+            error: "Method execution failed",
+            method: methodName,
+            message: error.message
           }), {
             status: 500,
             headers: { 'Content-Type': 'application/json' }
