@@ -60,7 +60,8 @@ interface Env {
 export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
   private readonly coingeckoApiKey: string;
   private readonly githubApiKey: string;
-
+  private readonly sharedSecret: string;
+  
   constructor(ctx: ExecutionContext, env: Env) {
     super(ctx, env);
     
@@ -70,10 +71,13 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
       env.API_KEY_COINGECKO ? `(length: ${env.API_KEY_COINGECKO.length})` : "");
     console.log("GitHub API Key:", env.API_KEY_GITHUB ? "present" : "missing", 
       env.API_KEY_GITHUB ? `(length: ${env.API_KEY_GITHUB.length})` : "");
+    console.log("Shared Secret:", env.SHARED_SECRET ? "present" : "missing",
+      env.SHARED_SECRET ? `(length: ${env.SHARED_SECRET.length})` : "");
     
     // Store them in class properties
     this.coingeckoApiKey = env.API_KEY_COINGECKO;
     this.githubApiKey = env.API_KEY_GITHUB;
+    this.sharedSecret = env.SHARED_SECRET; // Add this line
   }
   /**
    * Get comprehensive information about a specific web3 project by name or ticker symbol
@@ -765,22 +769,54 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
   }
 
   override async fetch(request: Request, env: Env): Promise<Response> {
-    // Log environment in fetch method
-    console.log("ENV in fetch method:", {
-      coingecko: this.coingeckoApiKey ? "present" : "missing",
-      github: this.githubApiKey ? "present" : "missing"
-    });
+    try {
+      // Log environment in fetch method
+      console.log("ENV in fetch method:", {
+        coingecko: this.coingeckoApiKey ? "present" : "missing",
+        github: this.githubApiKey ? "present" : "missing",
+        sharedSecret: this.sharedSecret ? "present" : "missing" // Updated this line
+      });
+    
+      if (new URL(request.url).pathname === '/test-api-keys') {
+        const results = await this.testApiKeys();
+        return new Response(JSON.stringify(results, null, 2), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
   
-    if (new URL(request.url).pathname === '/test-api-keys') {
-      const results = await this.testApiKeys();
-      return new Response(JSON.stringify(results, null, 2), {
+      // Add debug endpoint
+      if (new URL(request.url).pathname === '/debug-request') {
+        const requestDetails = {
+          method: request.method,
+          url: request.url,
+          headers: Object.fromEntries([...request.headers]),
+          body: request.body ? "present" : "missing"
+        };
+        console.log("Debug request:", requestDetails);
+        return new Response(JSON.stringify(requestDetails, null, 2), {
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      // Verify shared secret
+      if (!this.sharedSecret) {
+        console.error("Shared secret is missing!");
+        return new Response("Configuration error: Shared secret is missing", { status: 500 });
+      }
+      
+      // Use ProxyToSelf with the stored shared secret
+      return new ProxyToSelf(this, { 
+        sharedSecret: this.sharedSecret // Use this.sharedSecret instead of env.SHARED_SECRET
+      }).fetch(request);
+    } catch (error) {
+      console.error("Worker exception:", error);
+      return new Response(JSON.stringify({
+        error: error.message,
+        stack: error.stack
+      }), {
+        status: 500,
         headers: { 'Content-Type': 'application/json' }
       });
     }
-    
-    // Use ProxyToSelf with the current instance and shared secret
-    return new ProxyToSelf(this, { 
-      sharedSecret: env.SHARED_SECRET 
-    }).fetch(request);
   }
 }
