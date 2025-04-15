@@ -794,12 +794,36 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
     });
   }
 
+  /**
+   * Debug endpoint to specifically check authentication header from Claude
+   */
+  async debugAuth(request: Request): Promise<Response> {
+    const authHeader = request.headers.get('Authorization');
+    
+    return new Response(JSON.stringify({
+      authHeader: authHeader,
+      authHeaderLength: authHeader ? authHeader.length : 0,
+      secretLength: this.sharedSecret ? this.sharedSecret.length : 0,
+      secretFirst3Chars: this.sharedSecret ? this.sharedSecret.substring(0, 3) : null,
+      headerFirst10Chars: authHeader ? authHeader.substring(0, 10) : null,
+      headerLast10Chars: authHeader && authHeader.length > 10 ? authHeader.substring(authHeader.length - 10) : null,
+      exactMatch: authHeader === this.sharedSecret,
+      containsSecret: authHeader && this.sharedSecret ? authHeader.includes(this.sharedSecret) : false
+    }), { 
+      headers: { 'Content-Type': 'application/json' } 
+    });
+  }
+
   override async fetch(request: Request): Promise<Response> {
     // Debug endpoints that bypass authentication
     const url = new URL(request.url);
     
     if (url.pathname === '/debug-headers') {
       return this.debugHeaders(request);
+    }
+
+    if (url.pathname === '/debug-auth') {
+      return this.debugAuth(request);
     }
 
     if (url.pathname === '/test-api-keys') {
@@ -813,31 +837,49 @@ export default class Web3AnalystMCP extends WorkerEntrypoint<Env> {
     }
 
     // For all other endpoints, check authentication
-    const authHeader = request.headers.get('Authorization');
-    
+    const authHeader = request.headers.get('Authorization') || '';
+    const sharedSecret = this.sharedSecret || '';
+
     // Try multiple authentication formats
-    const exactMatch = authHeader === this.sharedSecret;
-    const bearerMatch = authHeader === `Bearer ${this.sharedSecret}`;
-    const endsWith = authHeader && this.sharedSecret && authHeader.endsWith(this.sharedSecret);
-    
+    let authenticated = false;
+
+    // Check exact match
+    if (authHeader === sharedSecret) {
+      authenticated = true;
+      console.log("Authenticated with exact match");
+    }
+    // Check Bearer format
+    else if (authHeader === `Bearer ${sharedSecret}`) {
+      authenticated = true;
+      console.log("Authenticated with Bearer prefix");
+    }
+    // Check if header contains the secret
+    else if (sharedSecret && authHeader.includes(sharedSecret)) {
+      authenticated = true;
+      console.log("Authenticated with partial match");
+    }
+
     console.log("Auth debug:", {
       authHeaderExists: !!authHeader,
-      authHeaderLength: authHeader ? authHeader.length : 0,
-      secretLength: this.sharedSecret ? this.sharedSecret.length : 0,
-      exactMatch,
-      bearerMatch,
-      endsWith,
-      authFirstChars: authHeader ? authHeader.substring(0, 3) : null,
-      secretFirstChars: this.sharedSecret ? this.sharedSecret.substring(0, 3) : null
+      authHeaderLength: authHeader.length,
+      secretLength: sharedSecret.length,
+      authFirst10Chars: authHeader.substring(0, Math.min(10, authHeader.length)),
+      secretFirst3Chars: sharedSecret.substring(0, Math.min(3, sharedSecret.length)),
+      authenticated: authenticated
     });
-    
-    if (!exactMatch && !bearerMatch && !endsWith) {
+
+    if (!authenticated) {
       return new Response(JSON.stringify({
         error: "Unauthorized",
         detail: "Authentication failed",
         authHeaderExists: !!authHeader,
-        secretExists: !!this.sharedSecret,
-        pathRequested: url.pathname
+        secretExists: !!sharedSecret,
+        pathRequested: url.pathname,
+        // Add more detailed info for debugging
+        authHeaderLength: authHeader.length,
+        secretLength: sharedSecret.length,
+        authFirst3Chars: authHeader.substring(0, Math.min(3, authHeader.length)),
+        secretFirst3Chars: sharedSecret.substring(0, Math.min(3, sharedSecret.length))
       }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' }
